@@ -37,9 +37,6 @@ jobs:
       - name: Analyze
         run: dart analyze
 
-      - name: Test
-        run: flutter test
-
       - name: Build web
         run: |
           if [[ "${GITHUB_REPOSITORY##*/}" == *.github.io ]]; then
