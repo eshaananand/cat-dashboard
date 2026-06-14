@@ -601,6 +601,17 @@ class PrepStore extends ChangeNotifier {
     return total / _mockResults.length;
   }
 
+  double? get averageMockPercentile {
+    if (_mockResults.isEmpty) {
+      return null;
+    }
+    final total = _mockResults.values.fold<double>(
+      0,
+      (sum, result) => sum + result.percentile,
+    );
+    return total / _mockResults.length;
+  }
+
   void _persistTopics() {
     _preferences.setStringList(
       _completedTopicsKey,

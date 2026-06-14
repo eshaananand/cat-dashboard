@@ -144,7 +144,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
         return AlertDialog(
           title: const Text('Reset dashboard progress?'),
           content: const Text(
-            'This clears checked subtopics, notes, daily study logs, study hours, weekly study days, today tasks, and mock results.',
+            'This clears checked subtopics, notes, study logs, study hours, weekly study days, reminders, and mock results.',
           ),
           actions: [
             TextButton(

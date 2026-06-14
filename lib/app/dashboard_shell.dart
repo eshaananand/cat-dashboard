@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../prep_store.dart';
 import '../screens/calendar_screen.dart';
+import '../screens/goals_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/mocks_screen.dart';
 import '../screens/plan_screen.dart';
@@ -48,6 +49,11 @@ class _DashboardShellState extends State<DashboardShell> {
                       icon: Icon(Icons.dashboard_outlined),
                       selectedIcon: Icon(Icons.dashboard),
                       label: Text('Dashboard'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(Icons.flag_outlined),
+                      selectedIcon: Icon(Icons.flag),
+                      label: Text('Goals'),
                     ),
                     NavigationRailDestination(
                       icon: Icon(Icons.checklist_outlined),
@@ -103,6 +109,11 @@ class _DashboardShellState extends State<DashboardShell> {
                 label: 'Home',
               ),
               NavigationDestination(
+                icon: Icon(Icons.flag_outlined),
+                selectedIcon: Icon(Icons.flag),
+                label: 'Goals',
+              ),
+              NavigationDestination(
                 icon: Icon(Icons.checklist_outlined),
                 selectedIcon: Icon(Icons.checklist),
                 label: 'Syllabus',
@@ -134,12 +145,14 @@ class _DashboardShellState extends State<DashboardShell> {
       case 0:
         return HomeScreen(store: widget.store);
       case 1:
-        return SyllabusScreen(store: widget.store);
+        return GoalsScreen(store: widget.store);
       case 2:
-        return MocksScreen(store: widget.store);
+        return SyllabusScreen(store: widget.store);
       case 3:
-        return CalendarScreen(store: widget.store);
+        return MocksScreen(store: widget.store);
       case 4:
+        return CalendarScreen(store: widget.store);
+      case 5:
         return PlanScreen(store: widget.store);
       default:
         return HomeScreen(store: widget.store);

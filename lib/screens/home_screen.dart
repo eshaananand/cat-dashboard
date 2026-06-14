@@ -9,6 +9,8 @@ import '../utils/color_utils.dart';
 import '../utils/date_utils.dart';
 import '../widgets/common_widgets.dart';
 
+const String _dashboardReminderNoteId = 'dashboard:reminder';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({required this.store, super.key});
 
@@ -18,12 +20,11 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final today = todayOnly();
     final daysLeft = math.max(targetExamDate.difference(today).inDays, 0);
-    final completedTasks = dailyTasks
-        .where((task) => store.isTaskComplete(task.id))
-        .length;
-    final overallProgress = store.completionFor(catTopics);
     final nextMock = nextUpcomingMock(store, today);
     final currentPhase = phaseFor(today);
+    final averageScore = store.averageMockScore;
+    final averagePercentile = store.averageMockPercentile;
+    final bestPercentile = store.bestPercentile;
     final quote =
         motivationLines[today.difference(prepStartDate).inDays.abs() %
             motivationLines.length];
@@ -41,34 +42,12 @@ class HomeScreen extends StatelessWidget {
             currentPhase: currentPhase,
           ),
           const SizedBox(height: 16),
-          _DailyBoostPanel(today: today),
-          const SizedBox(height: 16),
           ResponsiveMetricGrid(
             children: [
+              for (final section in CatSection.values)
+                _SectionMetricTile(section: section, store: store),
               MetricTile(
-                icon: Icons.track_changes,
-                title: 'Syllabus done',
-                value: '${(overallProgress * 100).round()}%',
-                caption:
-                    '${store.completedSubtopicCountFor(catTopics)} of ${store.totalSubtopicCountFor(catTopics)} subtopics complete',
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              MetricTile(
-                icon: Icons.timer_outlined,
-                title: 'Hours logged',
-                value: '${store.totalHoursLogged.toStringAsFixed(1)}h',
-                caption: '$totalHoursGoal hour six-month goal',
-                color: const Color(0xFFE05D44),
-              ),
-              MetricTile(
-                icon: Icons.fact_check_outlined,
-                title: 'Today',
-                value: '$completedTasks/${dailyTasks.length}',
-                caption: 'daily prep blocks complete',
-                color: const Color(0xFFF2B84B),
-              ),
-              MetricTile(
-                icon: Icons.assessment_outlined,
+                icon: Icons.assignment_turned_in_outlined,
                 title: 'Mocks done',
                 value: '${store.completedMockCount}',
                 caption: nextMock == null
@@ -76,25 +55,43 @@ class HomeScreen extends StatelessWidget {
                     : 'next: ${shortDate(nextMock.date)}',
                 color: const Color(0xFF4E6EAF),
               ),
+              MetricTile(
+                icon: Icons.functions,
+                title: 'Avg marks',
+                value: averageScore == null
+                    ? '-'
+                    : averageScore.toStringAsFixed(1),
+                caption: 'saved mock average score',
+                color: const Color(0xFFE05D44),
+              ),
+              MetricTile(
+                icon: Icons.workspace_premium_outlined,
+                title: 'Avg percentile',
+                value: averagePercentile == null
+                    ? '-'
+                    : averagePercentile.toStringAsFixed(2),
+                caption: bestPercentile == null
+                    ? 'add mock scores to start'
+                    : 'best: ${bestPercentile.toStringAsFixed(2)}',
+                color: const Color(0xFFF2B84B),
+              ),
             ],
           ),
-          const SizedBox(height: 16),
-          _WeeklyStudyPanel(store: store),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= 840;
-              final checklist = _DailyChecklist(store: store);
+              final notes = _StudyNotesPanel(store: store, today: today);
               final progress = _SectionProgressPanel(store: store);
               if (!wide) {
                 return Column(
-                  children: [checklist, const SizedBox(height: 16), progress],
+                  children: [notes, const SizedBox(height: 16), progress],
                 );
               }
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(flex: 6, child: checklist),
+                  Expanded(flex: 6, child: notes),
                   const SizedBox(width: 16),
                   Expanded(flex: 5, child: progress),
                 ],
@@ -102,26 +99,9 @@ class HomeScreen extends StatelessWidget {
             },
           ),
           const SizedBox(height: 16),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 840;
-              final upcoming = _UpcomingMocksPanel(store: store);
-              final focus = _FocusQueuePanel(store: store);
-              if (!wide) {
-                return Column(
-                  children: [upcoming, const SizedBox(height: 16), focus],
-                );
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: upcoming),
-                  const SizedBox(width: 16),
-                  Expanded(child: focus),
-                ],
-              );
-            },
-          ),
+          _WeeklyStudyPanel(store: store),
+          const SizedBox(height: 16),
+          _UpcomingMocksPanel(store: store),
         ],
       ),
     );
@@ -252,130 +232,191 @@ class _CountdownHero extends StatelessWidget {
   }
 }
 
-class _DailyChecklist extends StatelessWidget {
-  const _DailyChecklist({required this.store});
+class _SectionMetricTile extends StatelessWidget {
+  const _SectionMetricTile({required this.section, required this.store});
 
+  final CatSection section;
   final PrepStore store;
 
   @override
   Widget build(BuildContext context) {
-    return Panel(
-      title: 'Today',
-      icon: Icons.fact_check_outlined,
-      trailing: Text(
-        '${dailyTasks.where((task) => store.isTaskComplete(task.id)).length}/${dailyTasks.length}',
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      child: Column(
-        children: [
-          for (final task in dailyTasks)
-            CheckboxListTile(
-              value: store.isTaskComplete(task.id),
-              onChanged: (value) => store.toggleTask(task.id, value ?? false),
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              activeColor: sectionColor(task.section),
-              title: Text(
-                task.title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-              subtitle: Text('${task.detail} - ${task.minutes} min'),
-              secondary: Icon(
-                sectionIcon(task.section),
-                color: sectionColor(task.section),
-              ),
-            ),
-        ],
-      ),
+    final topics = catTopics
+        .where((topic) => topic.section == section)
+        .toList();
+    final progress = store.completionFor(topics);
+    final completed = store.completedSubtopicCountFor(topics);
+    final total = store.totalSubtopicCountFor(topics);
+    final covered = (progress * 100).round();
+    final left = math.max(100 - covered, 0);
+
+    return MetricTile(
+      icon: sectionIcon(section),
+      title: '${section.shortName} covered',
+      value: '$covered%',
+      caption: '$left% left - $completed/$total subtopics',
+      color: sectionColor(section),
     );
   }
 }
 
-class _DailyBoostPanel extends StatelessWidget {
-  const _DailyBoostPanel({required this.today});
+class _StudyNotesPanel extends StatefulWidget {
+  const _StudyNotesPanel({required this.store, required this.today});
 
+  final PrepStore store;
   final DateTime today;
 
   @override
-  Widget build(BuildContext context) {
-    final start = today.difference(prepStartDate).inDays.abs();
-    final lines = List.generate(3, (index) {
-      return motivationLines[(start + index + 1) % motivationLines.length];
-    });
-
-    return Panel(
-      title: 'Daily Boost',
-      icon: Icons.auto_awesome_outlined,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 720;
-          final chips = [
-            for (final line in lines)
-              _BoostChip(
-                text: line,
-                color: compact
-                    ? Theme.of(context).colorScheme.primary
-                    : const Color(0xFF4E6EAF),
-              ),
-          ];
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final chip in chips) ...[
-                  chip,
-                  if (chip != chips.last) const SizedBox(height: 8),
-                ],
-              ],
-            );
-          }
-          return Row(
-            children: [
-              for (final chip in chips) ...[
-                Expanded(child: chip),
-                if (chip != chips.last) const SizedBox(width: 10),
-              ],
-            ],
-          );
-        },
-      ),
-    );
-  }
+  State<_StudyNotesPanel> createState() => _StudyNotesPanelState();
 }
 
-class _BoostChip extends StatelessWidget {
-  const _BoostChip({required this.text, required this.color});
+class _StudyNotesPanelState extends State<_StudyNotesPanel> {
+  late final TextEditingController _todayController;
+  late final TextEditingController _reminderController;
 
-  final String text;
-  final Color color;
+  @override
+  void initState() {
+    super.initState();
+    _todayController = TextEditingController(
+      text: widget.store.studyLogFor(widget.today),
+    );
+    _reminderController = TextEditingController(
+      text: widget.store.noteFor(_dashboardReminderNoteId),
+    );
+  }
+
+  @override
+  void dispose() {
+    _todayController.dispose();
+    _reminderController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
+    final hasTodayLog = widget.store.studyLogFor(widget.today).isNotEmpty;
+    final isStudied = widget.store.isStudyDay(widget.today);
+
+    return Panel(
+      title: 'Study Notes',
+      icon: Icons.edit_note,
+      trailing: StatusChip(
+        label: hasTodayLog || isStudied ? 'Today saved' : 'Free text',
+        color: hasTodayLog || isStudied
+            ? const Color(0xFF00796B)
+            : Theme.of(context).colorScheme.primary,
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.bolt_outlined, size: 18, color: color),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 700;
+              final todayField = _DashboardTextField(
+                controller: _todayController,
+                label: 'What I studied today',
+                hint: 'Example: 2 RC passages, 1 DILR set, percentages drill.',
+                icon: Icons.today_outlined,
+              );
+              final reminderField = _DashboardTextField(
+                controller: _reminderController,
+                label: 'Reminder / tomorrow plan',
+                hint: 'Example: revise ratios, solve one caselet, review mock.',
+                icon: Icons.notifications_active_outlined,
+              );
+
+              if (!wide) {
+                return Column(
+                  children: [
+                    todayField,
+                    const SizedBox(height: 12),
+                    reminderField,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: todayField),
+                  const SizedBox(width: 12),
+                  Expanded(child: reminderField),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: _saveNotes,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('Save notes'),
               ),
-            ),
+              TextButton.icon(
+                onPressed: _clearTodayLog,
+                icon: const Icon(Icons.cleaning_services_outlined),
+                label: const Text('Clear today'),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _saveNotes() {
+    final todayText = _todayController.text.trim();
+    widget.store.saveStudyLog(
+      widget.today,
+      todayText.isNotEmpty,
+      _todayController.text,
+    );
+    widget.store.saveNote(_dashboardReminderNoteId, _reminderController.text);
+    _showSavedMessage();
+  }
+
+  void _clearTodayLog() {
+    _todayController.clear();
+    widget.store.saveStudyLog(widget.today, false, '');
+    _showSavedMessage();
+  }
+
+  void _showSavedMessage() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Notes saved')));
+  }
+}
+
+class _DashboardTextField extends StatelessWidget {
+  const _DashboardTextField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      minLines: 4,
+      maxLines: 7,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: Icon(icon),
+        alignLabelWithHint: true,
+        border: const OutlineInputBorder(),
       ),
     );
   }
@@ -660,6 +701,8 @@ class _SectionProgressRow extends StatelessWidget {
     final progress = store.completionFor(topics);
     final completed = store.completedSubtopicCountFor(topics);
     final total = store.totalSubtopicCountFor(topics);
+    final covered = (progress * 100).round();
+    final left = math.max(100 - covered, 0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -674,10 +717,18 @@ class _SectionProgressRow extends StatelessWidget {
               ),
             ),
             Text(
-              '$completed/$total',
+              '$covered% covered',
               style: Theme.of(context).textTheme.labelLarge,
             ),
           ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '$left% left - $completed/$total subtopics complete',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: mutedTextColor(context),
+            letterSpacing: 0,
+          ),
         ),
         const SizedBox(height: 8),
         ClipRRect(
@@ -763,89 +814,6 @@ class _CompactMockRow extends StatelessWidget {
                     ? mock.focus
                     : 'Score ${result.total}, percentile ${result.percentile.toStringAsFixed(2)}',
                 style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _FocusQueuePanel extends StatelessWidget {
-  const _FocusQueuePanel({required this.store});
-
-  final PrepStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final queue = catTopics
-        .where((topic) => !store.isTopicComplete(topic))
-        .take(5);
-    return Panel(
-      title: 'Next Topics',
-      icon: Icons.bolt_outlined,
-      child: Column(
-        children: [
-          for (final topic in queue)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _TopicMiniRow(topic: topic, store: store),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TopicMiniRow extends StatelessWidget {
-  const _TopicMiniRow({required this.topic, required this.store});
-
-  final PrepTopic topic;
-  final PrepStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final hours = store.hoursFor(topic.id);
-    final progress = store.topicCompletion(topic);
-    return Row(
-      children: [
-        Icon(sectionIcon(topic.section), color: sectionColor(topic.section)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                topic.title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text('${topic.section.shortName} - ${topic.priority} priority'),
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(99),
-                child: LinearProgressIndicator(
-                  minHeight: 7,
-                  value: progress,
-                  backgroundColor: sectionColor(
-                    topic.section,
-                  ).withValues(alpha: 0.12),
-                  valueColor: AlwaysStoppedAnimation(
-                    sectionColor(topic.section),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${store.completedSubtopicCount(topic)}/${topic.subtopics.length} subtopics - ${hours.toStringAsFixed(1)}h logged',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: mutedTextColor(context),
-                  letterSpacing: 0,
-                ),
               ),
             ],
           ),
