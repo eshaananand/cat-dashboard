@@ -240,7 +240,7 @@ class _SectionMetricTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topics = catTopics
+    final topics = store.allTopics
         .where((topic) => topic.section == section)
         .toList();
     final progress = store.completionFor(topics);
@@ -695,7 +695,7 @@ class _SectionProgressRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topics = catTopics
+    final topics = store.allTopics
         .where((topic) => topic.section == section)
         .toList();
     final progress = store.completionFor(topics);

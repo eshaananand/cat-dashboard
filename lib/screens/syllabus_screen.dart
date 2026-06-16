@@ -27,6 +27,11 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       subtitle:
           'Built from the working CAT syllabus in your PDFs: RC-heavy VARC, set-selection DILR, and Arithmetic plus Algebra-led QA.',
       actions: [
+        FilledButton.icon(
+          icon: const Icon(Icons.add),
+          label: const Text('Add Topic'),
+          onPressed: () => addCustomTopicDialog(context, widget.store),
+        ),
         Tooltip(
           message: 'Reset progress',
           child: IconButton(
@@ -116,7 +121,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
             if (_filter == 'All' || _filter == section.shortName) ...[
               _SectionTopicGroup(
                 section: section,
-                topics: catTopics
+                topics: widget.store.allTopics
                     .where((topic) => topic.section == section)
                     .toList(),
                 store: widget.store,
@@ -130,9 +135,9 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
 
   List<PrepTopic> _filteredTopics() {
     if (_filter == 'All') {
-      return catTopics;
+      return widget.store.allTopics;
     }
-    return catTopics
+    return widget.store.allTopics
         .where((topic) => topic.section.shortName == _filter)
         .toList();
   }
@@ -214,6 +219,14 @@ class TopicTrackerTile extends StatelessWidget {
     final hours = store.hoursFor(topic.id);
     final progress = store.topicCompletion(topic);
     final topicNote = store.noteFor(topicNoteId(topic));
+    final subtopics = store.subtopicsFor(topic);
+    final isCustomTopic = store.isCustomTopic(topic.id);
+    final completedUnits = subtopics.isEmpty
+        ? complete
+              ? 1
+              : 0
+        : store.completedSubtopicCount(topic);
+    final totalUnits = subtopics.isEmpty ? 1 : subtopics.length;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -246,6 +259,11 @@ class TopicTrackerTile extends StatelessWidget {
               label: topic.priority,
               color: priorityColor(topic.priority),
             ),
+            if (isCustomTopic)
+              StatusChip(
+                label: 'Custom',
+                color: Theme.of(context).colorScheme.primary,
+              ),
             if (topicNote.isNotEmpty)
               StatusChip(
                 label: 'Notes',
@@ -272,8 +290,7 @@ class TopicTrackerTile extends StatelessWidget {
                   ),
                   MetaChip(
                     icon: Icons.check_circle_outline,
-                    label:
-                        '${store.completedSubtopicCount(topic)}/${topic.subtopics.length} subtopics',
+                    label: '$completedUnits/$totalUnits completion items',
                   ),
                 ],
               ),
@@ -320,6 +337,15 @@ class TopicTrackerTile extends StatelessWidget {
                         ),
                       ),
                       Tooltip(
+                        message: 'Add subtopics',
+                        child: IconButton.filledTonal(
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.playlist_add),
+                          onPressed: () =>
+                              addCustomSubtopicsDialog(context, store, topic),
+                        ),
+                      ),
+                      Tooltip(
                         message: 'Remove 30 minutes',
                         child: IconButton(
                           visualDensity: VisualDensity.compact,
@@ -335,6 +361,16 @@ class TopicTrackerTile extends StatelessWidget {
                           onPressed: () => store.addTopicHours(topic, 0.5),
                         ),
                       ),
+                      if (isCustomTopic)
+                        Tooltip(
+                          message: 'Delete custom topic',
+                          child: IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () =>
+                                confirmRemoveCustomTopic(context, store, topic),
+                          ),
+                        ),
                     ],
                   );
 
@@ -365,9 +401,9 @@ class TopicTrackerTile extends StatelessWidget {
             NotePreview(note: topicNote),
             const SizedBox(height: 12),
           ],
-          for (final subtopic in topic.subtopics) ...[
+          for (final subtopic in subtopics) ...[
             SubtopicTrackerTile(topic: topic, subtopic: subtopic, store: store),
-            if (subtopic != topic.subtopics.last) const SizedBox(height: 10),
+            if (subtopic != subtopics.last) const SizedBox(height: 10),
           ],
         ],
       ),
@@ -391,6 +427,7 @@ class SubtopicTrackerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final complete = store.isSubtopicComplete(subtopic.id);
     final note = store.noteFor(subtopicNoteId(subtopic));
+    final isCustomSubtopic = store.isCustomSubtopic(subtopic.id);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -429,6 +466,11 @@ class SubtopicTrackerTile extends StatelessWidget {
                       label: subtopic.difficulty,
                       color: sectionColor(topic.section),
                     ),
+                    if (isCustomSubtopic)
+                      StatusChip(
+                        label: 'Custom',
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     if (note.isNotEmpty)
                       StatusChip(
                         label: 'Notes',
@@ -478,6 +520,19 @@ class SubtopicTrackerTile extends StatelessWidget {
               ),
             ),
           ),
+          if (isCustomSubtopic)
+            Tooltip(
+              message: 'Delete custom subtopic',
+              child: IconButton(
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => confirmRemoveCustomSubtopic(
+                  context,
+                  store,
+                  topic,
+                  subtopic,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -574,6 +629,259 @@ Future<void> editNote(
   if (saved != null) {
     store.saveNote(noteId, saved);
   }
+}
+
+Future<void> addCustomTopicDialog(BuildContext context, PrepStore store) async {
+  var section = CatSection.varc;
+  final titleController = TextEditingController();
+  final clusterController = TextEditingController();
+  final detailController = TextEditingController();
+  final hoursController = TextEditingController(text: '4');
+  final subtopicsController = TextEditingController();
+
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          final canSave = titleController.text.trim().isNotEmpty;
+          return AlertDialog(
+            title: const Text('Add custom topic'),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<CatSection>(
+                      initialValue: section,
+                      decoration: const InputDecoration(
+                        labelText: 'Section',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final item in CatSection.values)
+                          DropdownMenuItem(
+                            value: item,
+                            child: Text(item.shortName),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() {
+                            section = value;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: titleController,
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Topic name',
+                        hintText: 'Example: Venn diagrams',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: clusterController,
+                      decoration: const InputDecoration(
+                        labelText: 'Cluster',
+                        hintText: 'Example: Modern Maths',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: detailController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Short detail',
+                        hintText: 'What should this topic cover?',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: hoursController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Planned hours',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: subtopicsController,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'Subtopics',
+                        hintText: 'One subtopic per line',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: canSave ? () => Navigator.pop(context, true) : null,
+                icon: const Icon(Icons.add),
+                label: const Text('Add topic'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  if (saved == true) {
+    store.addCustomTopic(
+      section: section,
+      title: titleController.text,
+      cluster: clusterController.text,
+      detail: detailController.text,
+      plannedHours: int.tryParse(hoursController.text.trim()) ?? 4,
+      subtopicTitles: _linesFrom(subtopicsController.text),
+    );
+  }
+
+  titleController.dispose();
+  clusterController.dispose();
+  detailController.dispose();
+  hoursController.dispose();
+  subtopicsController.dispose();
+}
+
+Future<void> addCustomSubtopicsDialog(
+  BuildContext context,
+  PrepStore store,
+  PrepTopic topic,
+) async {
+  final controller = TextEditingController();
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          final canSave = _linesFrom(controller.text).isNotEmpty;
+          return AlertDialog(
+            title: Text('Add subtopics - ${topic.title}'),
+            content: SizedBox(
+              width: 520,
+              child: TextField(
+                controller: controller,
+                minLines: 5,
+                maxLines: 8,
+                onChanged: (_) => setDialogState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Subtopics',
+                  hintText: 'One subtopic per line',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: canSave ? () => Navigator.pop(context, true) : null,
+                icon: const Icon(Icons.playlist_add),
+                label: const Text('Add subtopics'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  if (saved == true) {
+    store.addCustomSubtopics(topic, _linesFrom(controller.text));
+  }
+  controller.dispose();
+}
+
+Future<void> confirmRemoveCustomTopic(
+  BuildContext context,
+  PrepStore store,
+  PrepTopic topic,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Delete custom topic?'),
+        content: Text(
+          'This removes "${topic.title}" and its custom subtopics from your tracker.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Delete'),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed == true) {
+    store.removeCustomTopic(topic);
+  }
+}
+
+Future<void> confirmRemoveCustomSubtopic(
+  BuildContext context,
+  PrepStore store,
+  PrepTopic topic,
+  PrepSubtopic subtopic,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Delete custom subtopic?'),
+        content: Text('This removes "${subtopic.title}" from ${topic.title}.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Delete'),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed == true) {
+    store.removeCustomSubtopic(topic, subtopic);
+  }
+}
+
+List<String> _linesFrom(String raw) {
+  return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
 }
 
 String topicNoteId(PrepTopic topic) => 'topic:${topic.id}';

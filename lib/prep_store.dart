@@ -124,6 +124,7 @@ class PrepStore extends ChangeNotifier {
   static const _taskDateKey = 'taskDate';
   static const _mockResultsKey = 'mockResults';
   static const _customMocksKey = 'customMocks';
+  static const _customSyllabusKey = 'customSyllabus';
   static const _completedPyqsKey = 'completedPyqs';
   static const _notesKey = 'notes';
   static const _studyDaysKey = 'studyDays';
@@ -140,6 +141,8 @@ class PrepStore extends ChangeNotifier {
   final Map<String, String> _studyLogs = {};
   final Map<String, MockResult> _mockResults = {};
   final List<CustomMock> _customMocks = [];
+  final List<PrepTopic> _customTopics = [];
+  final Map<String, List<PrepSubtopic>> _customSubtopics = {};
   final Set<String> _completedPyqIds = {};
   bool _darkMode = false;
 
@@ -160,8 +163,25 @@ class PrepStore extends ChangeNotifier {
   Map<String, String> get studyLogs => Map.unmodifiable(_studyLogs);
   Map<String, MockResult> get mockResults => Map.unmodifiable(_mockResults);
   List<CustomMock> get customMocks => List.unmodifiable(_customMocks);
+  List<PrepTopic> get customTopics => List.unmodifiable(_customTopics);
   Set<String> get completedPyqIds => Set.unmodifiable(_completedPyqIds);
   bool get darkMode => _darkMode;
+
+  List<PrepTopic> get allTopics => [...catTopics, ..._customTopics];
+
+  List<PrepSubtopic> subtopicsFor(PrepTopic topic) {
+    return [...topic.subtopics, ...?_customSubtopics[topic.id]];
+  }
+
+  bool isCustomTopic(String topicId) {
+    return _customTopics.any((topic) => topic.id == topicId);
+  }
+
+  bool isCustomSubtopic(String subtopicId) {
+    return _customSubtopics.values.any(
+      (subtopics) => subtopics.any((subtopic) => subtopic.id == subtopicId),
+    );
+  }
 
   void _hydrate() {
     _completedTopicIds
@@ -171,6 +191,16 @@ class PrepStore extends ChangeNotifier {
     _completedSubtopicIds
       ..clear()
       ..addAll(_preferences.getStringList(_completedSubtopicsKey) ?? const []);
+
+    final customSyllabus = _decodeCustomSyllabus(
+      _preferences.getString(_customSyllabusKey),
+    );
+    _customTopics
+      ..clear()
+      ..addAll(customSyllabus.topics);
+    _customSubtopics
+      ..clear()
+      ..addAll(customSyllabus.subtopics);
 
     _migrateCompletedTopicsToSubtopics();
 
@@ -273,6 +303,110 @@ class PrepStore extends ChangeNotifier {
     }
   }
 
+  ({List<PrepTopic> topics, Map<String, List<PrepSubtopic>> subtopics})
+  _decodeCustomSyllabus(String? raw) {
+    if (raw == null || raw.isEmpty) {
+      return (topics: [], subtopics: {});
+    }
+    try {
+      return _customSyllabusFromObject(jsonDecode(raw));
+    } on FormatException {
+      return (topics: [], subtopics: {});
+    }
+  }
+
+  ({List<PrepTopic> topics, Map<String, List<PrepSubtopic>> subtopics})
+  _customSyllabusFromObject(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      return (topics: [], subtopics: {});
+    }
+
+    final topics = <PrepTopic>[];
+    final rawTopics = value['topics'];
+    if (rawTopics is List) {
+      topics.addAll(rawTopics.map(_prepTopicFromJson).whereType<PrepTopic>());
+    }
+
+    final subtopics = <String, List<PrepSubtopic>>{};
+    final rawSubtopics = value['subtopics'];
+    if (rawSubtopics is Map<String, dynamic>) {
+      for (final entry in rawSubtopics.entries) {
+        final rawList = entry.value;
+        if (rawList is List) {
+          final parsed = rawList
+              .map(_prepSubtopicFromJson)
+              .whereType<PrepSubtopic>()
+              .toList();
+          if (parsed.isNotEmpty) {
+            subtopics[entry.key] = parsed;
+          }
+        }
+      }
+    }
+
+    return (topics: topics, subtopics: subtopics);
+  }
+
+  PrepTopic? _prepTopicFromJson(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      return null;
+    }
+    final id = value['id']?.toString();
+    final title = value['title']?.toString();
+    final section = _sectionFromJson(value['section']);
+    if (id == null || title == null || section == null) {
+      return null;
+    }
+    final plannedHours = value['plannedHours'];
+    return PrepTopic(
+      id: id,
+      section: section,
+      cluster: value['cluster']?.toString() ?? 'Custom',
+      title: title,
+      detail: value['detail']?.toString() ?? 'Custom topic added by you.',
+      difficulty: value['difficulty']?.toString() ?? 'Custom',
+      weight: value['weight']?.toString() ?? 'Custom coverage',
+      priority: value['priority']?.toString() ?? 'Medium',
+      plannedHours: plannedHours is num ? plannedHours.round() : 4,
+    );
+  }
+
+  PrepSubtopic? _prepSubtopicFromJson(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      return null;
+    }
+    final id = value['id']?.toString();
+    final title = value['title']?.toString();
+    if (id == null || title == null) {
+      return null;
+    }
+    return PrepSubtopic(
+      id,
+      title,
+      value['about']?.toString() ?? 'Custom subtopic added by you.',
+      value['weightage']?.toString() ?? 'Custom coverage',
+      value['pastYears']?.toString() ?? 'Added manually',
+      value['practiceHint']?.toString() ?? 'Add practice notes as you revise.',
+      difficulty: value['difficulty']?.toString() ?? 'Custom',
+    );
+  }
+
+  CatSection? _sectionFromJson(Object? value) {
+    switch (value?.toString()) {
+      case 'varc':
+      case 'VARC':
+        return CatSection.varc;
+      case 'dilr':
+      case 'DILR':
+        return CatSection.dilr;
+      case 'qa':
+      case 'QA':
+        return CatSection.qa;
+      default:
+        return null;
+    }
+  }
+
   Map<String, String> _decodeStringMap(String? raw) {
     if (raw == null || raw.isEmpty) {
       return {};
@@ -290,9 +424,10 @@ class PrepStore extends ChangeNotifier {
 
   void _migrateCompletedTopicsToSubtopics() {
     var changed = false;
-    for (final topic in catTopics) {
-      if (_completedTopicIds.contains(topic.id) && topic.subtopics.isNotEmpty) {
-        for (final subtopic in topic.subtopics) {
+    for (final topic in allTopics) {
+      final subtopics = subtopicsFor(topic);
+      if (_completedTopicIds.contains(topic.id) && subtopics.isNotEmpty) {
+        for (final subtopic in subtopics) {
           changed = _completedSubtopicIds.add(subtopic.id) || changed;
         }
       }
@@ -306,10 +441,11 @@ class PrepStore extends ChangeNotifier {
   }
 
   bool isTopicComplete(PrepTopic topic) {
-    if (topic.subtopics.isEmpty) {
+    final subtopics = subtopicsFor(topic);
+    if (subtopics.isEmpty) {
       return _completedTopicIds.contains(topic.id);
     }
-    return topic.subtopics.every((subtopic) => isSubtopicComplete(subtopic.id));
+    return subtopics.every((subtopic) => isSubtopicComplete(subtopic.id));
   }
 
   bool isSubtopicComplete(String subtopicId) {
@@ -336,9 +472,10 @@ class PrepStore extends ChangeNotifier {
   bool isPyqComplete(String pyqId) => _completedPyqIds.contains(pyqId);
 
   void setTopicComplete(PrepTopic topic, bool complete) {
+    final subtopics = subtopicsFor(topic);
     if (complete) {
       _completedTopicIds.add(topic.id);
-      for (final subtopic in topic.subtopics) {
+      for (final subtopic in subtopics) {
         _completedSubtopicIds.add(subtopic.id);
       }
       _topicHours[topic.id] = hoursFor(
@@ -346,7 +483,7 @@ class PrepStore extends ChangeNotifier {
       ).clamp(topic.plannedHours.toDouble(), topic.plannedHours.toDouble());
     } else {
       _completedTopicIds.remove(topic.id);
-      for (final subtopic in topic.subtopics) {
+      for (final subtopic in subtopics) {
         _completedSubtopicIds.remove(subtopic.id);
       }
     }
@@ -380,6 +517,105 @@ class PrepStore extends ChangeNotifier {
     final next = (current + delta).clamp(0, topic.plannedHours.toDouble());
     _topicHours[topic.id] = next.toDouble();
     _persistTopics();
+    notifyListeners();
+  }
+
+  void addCustomTopic({
+    required CatSection section,
+    required String title,
+    required String cluster,
+    required String detail,
+    required int plannedHours,
+    required List<String> subtopicTitles,
+  }) {
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      return;
+    }
+    final createdAt = DateTime.now().microsecondsSinceEpoch;
+    final topic = PrepTopic(
+      id: 'custom_topic_$createdAt',
+      section: section,
+      cluster: cluster.trim().isEmpty
+          ? 'Custom ${section.shortName}'
+          : cluster.trim(),
+      title: trimmedTitle,
+      detail: detail.trim().isEmpty
+          ? 'Custom topic added by you.'
+          : detail.trim(),
+      difficulty: 'Custom',
+      weight: 'Custom coverage',
+      priority: 'Medium',
+      plannedHours: plannedHours <= 0 ? 4 : plannedHours,
+    );
+    _customTopics.add(topic);
+
+    final subtopics = _customSubtopicsFromTitles(
+      topic.id,
+      subtopicTitles,
+      createdAt,
+    );
+    if (subtopics.isNotEmpty) {
+      _customSubtopics[topic.id] = subtopics;
+    }
+
+    _persistCustomSyllabus();
+    notifyListeners();
+  }
+
+  void addCustomSubtopics(PrepTopic topic, List<String> titles) {
+    final createdAt = DateTime.now().microsecondsSinceEpoch;
+    final subtopics = _customSubtopicsFromTitles(topic.id, titles, createdAt);
+    if (subtopics.isEmpty) {
+      return;
+    }
+    _customSubtopics.putIfAbsent(topic.id, () => []).addAll(subtopics);
+    _completedTopicIds.remove(topic.id);
+    _topicHours[topic.id] = mathSafeHours(topic, topicCompletion(topic));
+    _persistCustomSyllabus();
+    _persistTopics();
+    notifyListeners();
+  }
+
+  void removeCustomTopic(PrepTopic topic) {
+    if (!isCustomTopic(topic.id)) {
+      return;
+    }
+    final subtopics = subtopicsFor(topic);
+    _customTopics.removeWhere((customTopic) => customTopic.id == topic.id);
+    _customSubtopics.remove(topic.id);
+    _completedTopicIds.remove(topic.id);
+    _topicHours.remove(topic.id);
+    _notes.remove('topic:${topic.id}');
+    for (final subtopic in subtopics) {
+      _completedSubtopicIds.remove(subtopic.id);
+      _notes.remove('subtopic:${subtopic.id}');
+    }
+    _persistCustomSyllabus();
+    _persistTopics();
+    _preferences.setString(_notesKey, jsonEncode(_notes));
+    notifyListeners();
+  }
+
+  void removeCustomSubtopic(PrepTopic topic, PrepSubtopic subtopic) {
+    if (!isCustomSubtopic(subtopic.id)) {
+      return;
+    }
+    final subtopics = _customSubtopics[topic.id];
+    if (subtopics == null) {
+      return;
+    }
+    subtopics.removeWhere((item) => item.id == subtopic.id);
+    if (subtopics.isEmpty) {
+      _customSubtopics.remove(topic.id);
+    }
+    _completedSubtopicIds.remove(subtopic.id);
+    _completedTopicIds.remove(topic.id);
+    _notes.remove('subtopic:${subtopic.id}');
+    _topicHours[topic.id] = mathSafeHours(topic, topicCompletion(topic));
+    _persistCustomSyllabus();
+    _persistTopics();
+    _preferences.setString(_notesKey, jsonEncode(_notes));
     notifyListeners();
   }
 
@@ -546,33 +782,34 @@ class PrepStore extends ChangeNotifier {
 
   int totalSubtopicCountFor(Iterable<PrepTopic> topics) {
     return topics.fold<int>(0, (sum, topic) {
-      return sum + (topic.subtopics.isEmpty ? 1 : topic.subtopics.length);
+      final subtopics = subtopicsFor(topic);
+      return sum + (subtopics.isEmpty ? 1 : subtopics.length);
     });
   }
 
   int completedSubtopicCountFor(Iterable<PrepTopic> topics) {
     return topics.fold<int>(0, (sum, topic) {
-      if (topic.subtopics.isEmpty) {
+      final subtopics = subtopicsFor(topic);
+      if (subtopics.isEmpty) {
         return sum + (isTopicComplete(topic) ? 1 : 0);
       }
       return sum +
-          topic.subtopics
-              .where((subtopic) => isSubtopicComplete(subtopic.id))
-              .length;
+          subtopics.where((subtopic) => isSubtopicComplete(subtopic.id)).length;
     });
   }
 
   int completedSubtopicCount(PrepTopic topic) {
-    return topic.subtopics
-        .where((subtopic) => isSubtopicComplete(subtopic.id))
-        .length;
+    return subtopicsFor(
+      topic,
+    ).where((subtopic) => isSubtopicComplete(subtopic.id)).length;
   }
 
   double topicCompletion(PrepTopic topic) {
-    if (topic.subtopics.isEmpty) {
+    final subtopics = subtopicsFor(topic);
+    if (subtopics.isEmpty) {
       return isTopicComplete(topic) ? 1 : 0;
     }
-    return completedSubtopicCount(topic) / topic.subtopics.length;
+    return completedSubtopicCount(topic) / subtopics.length;
   }
 
   double get totalHoursLogged {
@@ -648,6 +885,67 @@ class PrepStore extends ChangeNotifier {
     );
   }
 
+  void _persistCustomSyllabus() {
+    _preferences.setString(_customSyllabusKey, jsonEncode(_customSyllabusJson));
+  }
+
+  Map<String, Object> get _customSyllabusJson {
+    return {
+      'topics': _customTopics.map(_topicToJson).toList(),
+      'subtopics': _customSubtopics.map((topicId, subtopics) {
+        return MapEntry(topicId, subtopics.map(_subtopicToJson).toList());
+      }),
+    };
+  }
+
+  Map<String, Object> _topicToJson(PrepTopic topic) {
+    return {
+      'id': topic.id,
+      'section': topic.section.name,
+      'cluster': topic.cluster,
+      'title': topic.title,
+      'detail': topic.detail,
+      'difficulty': topic.difficulty,
+      'weight': topic.weight,
+      'priority': topic.priority,
+      'plannedHours': topic.plannedHours,
+    };
+  }
+
+  Map<String, Object> _subtopicToJson(PrepSubtopic subtopic) {
+    return {
+      'id': subtopic.id,
+      'title': subtopic.title,
+      'about': subtopic.about,
+      'weightage': subtopic.weightage,
+      'pastYears': subtopic.pastYears,
+      'practiceHint': subtopic.practiceHint,
+      'difficulty': subtopic.difficulty,
+    };
+  }
+
+  List<PrepSubtopic> _customSubtopicsFromTitles(
+    String topicId,
+    List<String> titles,
+    int createdAt,
+  ) {
+    final cleanTitles = titles
+        .map((title) => title.trim())
+        .where((title) => title.isNotEmpty);
+    return [
+      for (final entry in cleanTitles.indexed)
+        PrepSubtopic(
+          'custom_subtopic_${topicId}_${createdAt}_${entry.$1}',
+          entry.$2,
+          'Custom subtopic added by you.',
+          'Custom coverage',
+          'Added manually',
+          'Add practice notes as you revise.',
+          difficulty: 'Custom',
+        ),
+    ];
+  }
+
   void _persistPyqs() {
     _preferences.setStringList(_completedPyqsKey, _completedPyqIds.toList());
   }
@@ -671,6 +969,7 @@ class PrepStore extends ChangeNotifier {
       'studyLogs': _studyLogs,
       'notes': _notes,
       'customMocks': _customMocks.map((mock) => mock.toJson()).toList(),
+      'customSyllabus': _customSyllabusJson,
       'completedPyqs': _completedPyqIds.toList(),
       'mockResults': _mockResults.map(
         (key, value) => MapEntry(key, value.toJson()),
@@ -712,6 +1011,19 @@ class PrepStore extends ChangeNotifier {
       _customMocks
         ..clear()
         ..addAll(_customMocksFrom(decoded['customMocks']));
+
+      final customSyllabus = _customSyllabusFromObject(
+        decoded['customSyllabus'],
+      );
+      _customTopics
+        ..clear()
+        ..addAll(customSyllabus.topics);
+      _customSubtopics
+        ..clear()
+        ..addAll(customSyllabus.subtopics);
+
+      _migrateCompletedTopicsToSubtopics();
+
       _completedPyqIds
         ..clear()
         ..addAll(_stringListFrom(decoded['completedPyqs']));
@@ -742,6 +1054,7 @@ class PrepStore extends ChangeNotifier {
       _persistStudyLogs();
       _preferences.setString(_notesKey, jsonEncode(_notes));
       _persistCustomMocks();
+      _persistCustomSyllabus();
       _persistPyqs();
       _persistMocks();
       _preferences.setBool(_darkModeKey, _darkMode);
